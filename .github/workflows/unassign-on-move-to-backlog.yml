@@ -1,0 +1,42 @@
+name: Unassign issue on move to Backlog
+
+on:
+  project_card:
+    types: 
+      - moved
+
+jobs:
+    unassign-card:
+        runs-on: ubuntu-latest
+        if: github.event.project_card.column_name == 'Backlog'
+        
+        steps:
+            - name: Unassign issue when moved to Backlog
+              uses: actions/github-script@v6
+              with:
+                github-token: ${{ secrets.GITHUB_TOKEN }}
+                script: |
+                  // This script retrieves the issue or pull request associated with the moved project card.
+                  // It then unassigns all current assignees from that issue or pull request.
+                  const { issue, pull_request } = context.payload.project_card.content_url
+                    ? await github.rest.request(context.payload.project_card.content_url)
+                    : { issue: null, pull_request: null };
+
+                  const issueNumber = issue ? issue.number : (pull_request ? pull_request.number : null);
+
+                  if (issueNumber) {
+                    const assignees = issue ? issue.assignees.map(a => a.login) : (pull_request ? pull_request.assignees.map(a => a.login) : []);
+                    if (assignees.length > 0) {
+                      await github.rest.issues.removeAssignees({
+                        owner: context.repo.owner,
+                        repo: context.repo.repo,
+                        issue_number: issueNumber,
+                        assignees: assignees
+                      });
+                      console.log(`Unassigned users ${assignees.join(', ')} from issue #${issueNumber}.`);
+                    } else {
+                      console.log(`Issue #${issueNumber} has no assignees to remove.`);
+                    }
+                  } else {
+                    console.log('Moved card is not a recognized issue or pull request.');
+                  }
