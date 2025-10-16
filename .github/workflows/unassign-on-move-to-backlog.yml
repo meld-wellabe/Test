@@ -1,42 +1,98 @@
-name: Unassign issue on move to Backlog
+name: Unassign issue on move to Backlog (Projects Beta)
 
 on:
-  project_card:
-    types: 
-      - moved
+  projects_v2_item:
+    types:
+      - edited
 
 jobs:
-    unassign-card:
-        runs-on: ubuntu-latest
-        if: github.event.project_card.column_name == 'Backlog'
-        
-        steps:
-            - name: Unassign issue when moved to Backlog
-              uses: actions/github-script@v6
-              with:
-                github-token: ${{ secrets.GITHUB_TOKEN }}
-                script: |
-                  // This script retrieves the issue or pull request associated with the moved project card.
-                  // It then unassigns all current assignees from that issue or pull request.
-                  const { issue, pull_request } = context.payload.project_card.content_url
-                    ? await github.rest.request(context.payload.project_card.content_url)
-                    : { issue: null, pull_request: null };
+  unassign-card:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Unassign issue when moved to Backlog (Projects Beta)
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fieldName = "Status"; // Change this to your status field name
+            const backlogValue = "Backlog"; // Change this to your backlog value
+            
+            const itemId = context.payload.projects_v2_item.id;
+            const projectId = context.payload.projects_v2_item.project_node_id;
 
-                  const issueNumber = issue ? issue.number : (pull_request ? pull_request.number : null);
-
-                  if (issueNumber) {
-                    const assignees = issue ? issue.assignees.map(a => a.login) : (pull_request ? pull_request.assignees.map(a => a.login) : []);
-                    if (assignees.length > 0) {
-                      await github.rest.issues.removeAssignees({
-                        owner: context.repo.owner,
-                        repo: context.repo.repo,
-                        issue_number: issueNumber,
-                        assignees: assignees
-                      });
-                      console.log(`Unassigned users ${assignees.join(', ')} from issue #${issueNumber}.`);
-                    } else {
-                      console.log(`Issue #${issueNumber} has no assignees to remove.`);
+            // Query Project item fields
+            const result = await github.graphql(`
+              query($projectId: ID!, $itemId: ID!) {
+                node(id: $projectId) {
+                  ... on ProjectV2 {
+                    item(id: $itemId) {
+                      id
+                      fieldValues(first: 20) {
+                        nodes {
+                          value
+                          projectField {
+                            name
+                          }
+                        }
+                      }
+                      content {
+                        ... on Issue {
+                          id
+                          number
+                          assignees(first: 10) {
+                            nodes {
+                              login
+                            }
+                          }
+                          repository {
+                            name
+                            owner { login }
+                          }
+                        }
+                        ... on PullRequest {
+                          id
+                          number
+                          assignees(first: 10) {
+                            nodes {
+                              login
+                            }
+                          }
+                          repository {
+                            name
+                            owner { login }
+                          }
+                        }
+                      }
                     }
-                  } else {
-                    console.log('Moved card is not a recognized issue or pull request.');
                   }
+                }
+              }
+            `, {
+              projectId,
+              itemId
+            });
+
+            const item = result.node.item;
+            const statusField = item.fieldValues.nodes.find(field => field.projectField.name === fieldName);
+
+            if (statusField && statusField.value === backlogValue) {
+              const content = item.content;
+              if (content) {
+                const assignees = content.assignees.nodes.map(a => a.login);
+                if (assignees.length > 0) {
+                  await github.rest.issues.removeAssignees({
+                    owner: content.repository.owner.login,
+                    repo: content.repository.name,
+                    issue_number: content.number,
+                    assignees: assignees
+                  });
+                  console.log(`Unassigned users ${assignees.join(', ')} from issue #${content.number}.`);
+                } else {
+                  console.log(`Issue #${content.number} has no assignees to remove.`);
+                }
+              } else {
+                console.log('Project item is not an issue or pull request.');
+              }
+            } else {
+              console.log('Project item status is not Backlog.');
+            }
